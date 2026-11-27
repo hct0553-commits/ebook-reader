@@ -69,11 +69,29 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .sync-status { font-size: 12px; color: var(--muted); padding: 4px 16px 0; min-height: 4px; }
 
 /* ---------- library ---------- */
+.lib-list { flex: 1; overflow-y: auto; padding: 4px 14px calc(96px + var(--safe-bottom)); }
 .grid {
-  flex: 1; overflow-y: auto; padding: 14px 14px calc(96px + var(--safe-bottom));
   display: grid; gap: 16px 14px; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-  align-content: start;
+  align-content: start; padding: 4px 0 18px;
 }
+.lib-tools { padding: 8px 14px 2px; }
+.search { position: relative; display: flex; align-items: center; }
+.search svg { position: absolute; left: 11px; width: 19px; height: 19px; fill: var(--muted); pointer-events: none; }
+.search input {
+  width: 100%; font: inherit; font-size: 16px; color: var(--fg); background: var(--card);
+  border: 1px solid var(--line); border-radius: 10px; padding: 9px 38px 9px 38px; -webkit-appearance: none; appearance: none;
+}
+.search input:focus { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); border-color: var(--accent); }
+.search input::-webkit-search-cancel-button { display: none; }
+.search .clear { position: absolute; right: 4px; border: 0; background: none; color: var(--muted); font-size: 15px; width: 34px; height: 34px; border-radius: 50%; }
+.lib-head { display: flex; align-items: center; gap: 8px; margin: 12px 0 4px; font-size: 15px; font-weight: 600; }
+.lib-head .count { font-weight: 400; color: var(--muted); font-size: 13px; }
+.lib-head select {
+  margin-left: auto; font: inherit; font-size: 13px; color: var(--fg); background: var(--card);
+  border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px;
+}
+.lib-note { color: var(--muted); font-size: 14px; text-align: center; padding: 40px 0; line-height: 1.7; }
+.book-author { font-size: 12px; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .book { position: relative; cursor: pointer; user-select: none; -webkit-user-select: none; }
 .cover {
   aspect-ratio: 2 / 3; border-radius: 6px; overflow: hidden; background: var(--card);
@@ -108,7 +126,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
   background: var(--accent); color: var(--accent-fg); font-size: 32px; line-height: 1;
   box-shadow: 0 4px 14px rgba(0,0,0,.25);
 }
-body.dragging .grid { outline: 3px dashed var(--accent); outline-offset: -10px; }
+body.dragging .lib-list { outline: 3px dashed var(--accent); outline-offset: -10px; }
 
 /* ---------- reader ---------- */
 #view-reader { background: var(--page); }

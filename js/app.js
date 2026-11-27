@@ -7,6 +7,7 @@ import {
     applyHighlights, newId, sortedHighlights, COLORS,
 } from './highlights.js'
 import * as exporter from './export.js'
+import { toSimplified } from './t2s.js'
 
 const $ = s => document.querySelector(s)
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
@@ -106,9 +107,30 @@ async function sha256Hex(buf) {
 /* ====================== 書庫畫面 ====================== */
 const hue = s => [...(s || '')].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 7)
 
+const RECENT_LIMIT = 50
+// 最後一次「開啟」的時間；舊資料沒有 openedAt 時，以最後閱讀進度時間代替
+const lastOpened = b => b.openedAt || b.progress?.updatedAt || 0
+const collator = new Intl.Collator('zh-Hant-TW', { numeric: true, sensitivity: 'base' })
+const SORTS = {
+    title: { label: '依書名', cmp: (a, b) => collator.compare(a.title || '', b.title || '') },
+    author: {
+        label: '依作者',
+        // 沒有作者的書排在最後
+        cmp: (a, b) => (!a.author - !b.author) || collator.compare(a.author || '', b.author || '') || SORTS.title.cmp(a, b),
+    },
+    added: { label: '依加入時間', cmp: (a, b) => (b.addedAt || 0) - (a.addedAt || 0) },
+}
+let librarySort = SORTS[localStorage.getItem('librarySort')] ? localStorage.getItem('librarySort') : 'title'
+
 function visibleBooks() {
     return Object.values(library.books).filter(b => !b.deleted)
-        .sort((a, b) => (b.progress?.updatedAt || b.addedAt || 0) - (a.progress?.updatedAt || a.addedAt || 0))
+}
+
+// 搜尋用的正規化：全形轉半形、不分大小寫、繁體轉簡體（簡繁互通）
+const normalize = s => toSimplified(String(s || '').normalize('NFKC').toLowerCase())
+function matches(b, terms) {
+    const hay = normalize(`${b.title} ${b.author || ''} ${b.fileName || ''}`)
+    return terms.every(t => hay.includes(t))
 }
 
 async function coverURL(id) {
@@ -119,27 +141,79 @@ async function coverURL(id) {
     return url
 }
 
+let renderSeq = 0
 async function renderLibrary() {
+    const seq = ++renderSeq
     const books = visibleBooks()
-    const grid = $('#library-grid')
+    const list = $('#library-grid')
     $('#library-empty').classList.toggle('hidden', books.length > 0)
-    const cards = await Promise.all(books.map(async b => {
-        const url = localFiles.has(b.id) ? await coverURL(b.id) : null
-        const pct = Math.round((b.progress?.percent || 0) * 100)
-        const n = sortedHighlights(b).length
-        const cover = url ? `<img src="${url}" alt="">`
-            : `<div class="ph" style="background:hsl(${hue(b.title)} 35% 40%)">${esc(b.title)}<small>${esc(b.author || '')}</small></div>`
-        return `<div class="book" data-id="${b.id}">
-            <div class="cover">${cover}<span class="badge">${esc(b.format)}</span>
-              ${localFiles.has(b.id) ? '' : '<span class="badge cloud">雲端</span>'}</div>
-            <button class="book-menu" data-menu="${b.id}" title="更多">⋯</button>
-            <div class="book-title">${esc(b.title)}</div>
-            <div class="book-meta"><span>${pct}%</span><span>${n ? `🖍 ${n}` : ''}</span></div>
-            <div class="progressbar"><div style="width:${pct}%"></div></div>
-          </div>`
-    }))
-    grid.innerHTML = cards.join('')
+    $('#lib-tools').classList.toggle('hidden', books.length === 0)
+    const query = $('#lib-search').value.trim()
+    $('#lib-search-clear').classList.toggle('hidden', !query)
+
+    const section = (title, count, items, extra = '') => items.length
+        ? `<div class="lib-head"><span>${title}</span><span class="count">${count}</span>${extra}</div>
+           <div class="grid">${items.join('')}</div>` : ''
+    let html
+    if (query) {
+        const terms = normalize(query).split(/\s+/).filter(Boolean)
+        const found = books.filter(b => matches(b, terms))
+            .sort((a, b) => (lastOpened(b) - lastOpened(a)) || SORTS.title.cmp(a, b))
+        const cards = await Promise.all(found.map(bookCard))
+        html = found.length
+            ? section('搜尋結果', `找到 ${found.length} 本`, cards)
+            : `<div class="lib-note">找不到符合「${esc(query)}」的書<br>可以試試書名或作者的其中幾個字</div>`
+    } else {
+        const recent = books.filter(lastOpened).sort((a, b) => lastOpened(b) - lastOpened(a)).slice(0, RECENT_LIMIT)
+        const inRecent = new Set(recent.map(b => b.id))
+        const rest = books.filter(b => !inRecent.has(b.id)).sort(SORTS[librarySort].cmp)
+        const [rc, oc] = await Promise.all([Promise.all(recent.map(bookCard)), Promise.all(rest.map(bookCard))])
+        const sortSel = `<select id="lib-sort" aria-label="排序">${Object.entries(SORTS).map(([k, v]) =>
+            `<option value="${k}"${k === librarySort ? ' selected' : ''}>${v.label}</option>`).join('')}</select>`
+        html = section('📖 最近閱讀', `${recent.length} 本`, rc)
+            + section(recent.length ? '📚 其他書籍' : '📚 全部書籍', `${rest.length} 本`, oc, sortSel)
+    }
+    if (seq !== renderSeq) return   // 打字太快時，只顯示最後一次的結果
+    list.innerHTML = html
 }
+
+async function bookCard(b) {
+    const url = localFiles.has(b.id) ? await coverURL(b.id) : null
+    const pct = Math.round((b.progress?.percent || 0) * 100)
+    const n = sortedHighlights(b).length
+    const cover = url ? `<img src="${url}" alt="">`
+        : `<div class="ph" style="background:hsl(${hue(b.title)} 35% 40%)">${esc(b.title)}<small>${esc(b.author || '')}</small></div>`
+    return `<div class="book" data-id="${b.id}">
+        <div class="cover">${cover}<span class="badge">${esc(b.format)}</span>
+          ${localFiles.has(b.id) ? '' : '<span class="badge cloud">雲端</span>'}</div>
+        <button class="book-menu" data-menu="${b.id}" title="更多">⋯</button>
+        <div class="book-title">${esc(b.title)}</div>
+        ${b.author ? `<div class="book-author">${esc(b.author)}</div>` : ''}
+        <div class="book-meta"><span>${pct}%</span><span>${n ? `🖍 ${n}` : ''}</span></div>
+        <div class="progressbar"><div style="width:${pct}%"></div></div>
+      </div>`
+}
+
+let searchTimer
+$('#lib-search').addEventListener('input', () => {
+    clearTimeout(searchTimer)
+    searchTimer = setTimeout(renderLibrary, 150)
+})
+$('#lib-search').addEventListener('keydown', e => {
+    if (e.key === 'Escape') { e.target.value = ''; renderLibrary() }
+    if (e.key === 'Enter') e.target.blur()   // 手機上收起鍵盤
+})
+$('#lib-search-clear').onclick = () => {
+    $('#lib-search').value = ''
+    renderLibrary()
+    $('#lib-search').focus()
+}
+$('#library-grid').addEventListener('change', e => {
+    if (e.target.id !== 'lib-sort') return
+    librarySort = e.target.value
+    localStorage.setItem('librarySort', librarySort)
+    renderLibrary()
+})
 
 $('#library-grid').addEventListener('click', e => {
     const menu = e.target.closest('[data-menu]')
@@ -159,11 +233,33 @@ function bookMenu(id) {
         const a = e.target.closest('[data-a]')?.dataset.a
         if (a === 'export') exportDialog(id)
         if (a === 'info') {
-            openModal('書籍資訊', `<p><b>${esc(b.title)}</b></p><p>作者：${esc(b.author || '—')}</p>
-                <p>格式：${esc(b.format.toUpperCase())}・${(b.size / 1048576).toFixed(1)} MB</p>
-                <p>檔名：${esc(b.fileName)}</p><p>加入時間：${exporter.fmtDate(b.addedAt)}</p>
-                <p>重點：${n} 則</p><p>雲端：${b.driveFileId ? '已上傳 Google Drive' : '尚未上傳'}</p>
-                <p>本機：${localFiles.has(b.id) ? '已下載' : '未下載（開啟時自動下載）'}</p>`)
+            const info = openModal('書籍資訊', `
+                <label for="bi-title">書名</label>
+                <input type="text" id="bi-title" value="${esc(b.title)}" autocomplete="off">
+                <label for="bi-author">作者</label>
+                <input type="text" id="bi-author" value="${esc(b.author || '')}" placeholder="例如：錢穆" autocomplete="off">
+                <div class="row" style="margin-top:12px"><button class="btn primary" id="bi-save">儲存</button>
+                  <span class="hint">修改後會同步到其他裝置，搜尋也會用新的書名與作者</span></div>
+                <p class="hint" style="margin-top:16px;font-size:13px">
+                格式：${esc(b.format.toUpperCase())}・${(b.size / 1048576).toFixed(1)} MB<br>
+                檔名：${esc(b.fileName)}<br>加入時間：${exporter.fmtDate(b.addedAt)}<br>
+                ${lastOpened(b) ? `最後開啟：${exporter.fmtDate(lastOpened(b))}<br>` : ''}
+                重點：${n} 則<br>雲端：${b.driveFileId ? '已上傳 Google Drive' : '尚未上傳'}<br>
+                本機：${localFiles.has(b.id) ? '已下載' : '未下載（開啟時自動下載）'}</p>`)
+            info.querySelector('#bi-save').onclick = () => {
+                const title = info.querySelector('#bi-title').value.trim()
+                const author = info.querySelector('#bi-author').value.trim()
+                if (!title) return toast('書名不能空白')
+                if (title !== b.title || author !== (b.author || '')) {
+                    b.title = title
+                    b.author = author
+                    b.updatedAt = Date.now()
+                    saveLibrary({ now: true })
+                    renderLibrary()
+                }
+                closeModal()
+                toast('已更新書籍資訊')
+            }
         }
         if (a === 'delete') {
             if (!confirm(`確定要移除《${b.title}》嗎？\n重點也會一併隱藏（若重新匯入同一本書會恢復）。`)) return
@@ -294,6 +390,8 @@ async function openBookById(id) {
         }
         const view = isPdf ? new PdfView(opts) : new FlowView(opts)
         current = { id, book, view, sectionTitles }
+        r.openedAt = Date.now()   // 「最近閱讀」排序用；同步時兩邊取較新的，不動 updatedAt
+        saveLibrary()
         if (isPdf) await view.init()
         const p = r.progress
         await view.show(p?.section ?? 0, { frac: p?.frac ?? 0 })

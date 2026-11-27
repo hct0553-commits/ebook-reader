@@ -32,7 +32,14 @@
     </div>
   </header>
   <div id="sync-status" class="sync-status"></div>
-  <main id="library-grid" class="grid"></main>
+  <div id="lib-tools" class="lib-tools hidden">
+    <div class="search">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 3a6.5 6.5 0 0 1 5.2 10.4l5.5 5.5-1.4 1.4-5.5-5.5A6.5 6.5 0 1 1 9.5 3zm0 2a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z"/></svg>
+      <input id="lib-search" type="search" placeholder="搜尋書名、作者（簡繁皆可）" autocomplete="off" spellcheck="false" enterkeyhint="search" aria-label="搜尋書庫">
+      <button id="lib-search-clear" class="clear hidden" title="清除" aria-label="清除搜尋">✕</button>
+    </div>
+  </div>
+  <main id="library-grid" class="lib-list"></main>
   <div id="library-empty" class="empty hidden">
     <p>書庫還是空的</p>
     <p class="muted">點右下角「＋」匯入電子書<br>支援 EPUB・PDF・MOBI・AZW3・TXT・DOCX・FB2</p>

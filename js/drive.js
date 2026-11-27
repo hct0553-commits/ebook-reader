@@ -227,6 +227,8 @@ export function mergeLibraries(local, remote) {
             m.driveFileId = older.driveFileId
             m.driveTrashed = false
         }
+        const opened = Math.max(a.openedAt || 0, b.openedAt || 0)
+        if (opened) m.openedAt = opened
         const pa = a.progress, pb = b.progress
         m.progress = structuredClone((pa?.updatedAt || 0) >= (pb?.updatedAt || 0) ? pa : pb) ?? null
         const ha = a.highlights ?? {}, hb = b.highlights ?? {}

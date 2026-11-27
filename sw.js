@@ -1,9 +1,9 @@
 // Service Worker：離線可用。App 本體「網路優先」（確保更新），函式庫「快取優先」
-const VERSION = 'ebr-v1'
+const VERSION = 'ebr-v2'
 const CORE = [
     './', 'index.html', 'manifest.webmanifest', 'css/app.css',
     'js/app.js', 'js/config.js', 'js/db.js', 'js/drive.js', 'js/export.js',
-    'js/formats.js', 'js/highlights.js', 'js/reader.js', 'js/zip.js',
+    'js/formats.js', 'js/highlights.js', 'js/reader.js', 'js/zip.js', 'js/t2s.js',
     'vendor/mammoth/mammoth.browser.min.js',
     'vendor/foliate-js/vendor/pdfjs/text_layer_builder.css',
     'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-180.png',
