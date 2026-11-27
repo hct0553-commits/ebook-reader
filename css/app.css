@@ -229,6 +229,27 @@ mark.hl.flash { animation: flash 1.2s ease 2; }
   background: var(--bg); border-radius: 14px; box-shadow: 0 10px 40px rgba(0,0,0,.35);
 }
 #modal-backdrop { z-index: 40; }
+.modal.wide { width: min(760px, 96vw); height: 88vh; max-height: none; }
+.modal.wide .modal-body { display: flex; flex-direction: column; padding: 10px 12px 12px; overflow: hidden; flex: 1; }
+.loading .btn { color: var(--fg); }
+/* ---------- 掃描資料夾 ---------- */
+.scan-sum { font-size: 13px; color: var(--muted); margin: 0 2px 8px; line-height: 1.5; }
+.scan-tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.scan-tools .search { flex: 1 1 200px; }
+.scan-tools .search input { padding-top: 7px; padding-bottom: 7px; font-size: 15px; }
+.chip { border: 1px solid var(--line); background: var(--card); color: var(--muted); border-radius: 999px; padding: 4px 10px; font-size: 13px; }
+.chip.on { background: color-mix(in srgb, var(--accent) 14%, var(--card)); border-color: var(--accent); color: var(--fg); }
+.scan-list { flex: 1; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+.scan-row { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.scan-row:last-child { border-bottom: 0; }
+.scan-row input { width: 20px; height: 20px; flex: none; accent-color: var(--accent); }
+.scan-row .nm { flex: 1; min-width: 0; }
+.scan-row .nm b { display: block; font-weight: 400; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scan-row .nm small { display: block; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scan-row .sz { color: var(--muted); font-size: 12px; flex: none; text-align: right; }
+.scan-row.dup { opacity: .5; cursor: default; }
+.scan-foot { display: flex; align-items: center; gap: 8px; padding-top: 10px; }
+.scan-foot .info { flex: 1; font-size: 13px; color: var(--muted); }
 .modal-body { overflow-y: auto; padding: 14px 16px 18px; }
 .modal-body label { display: block; font-size: 14px; margin: 12px 0 6px; }
 .modal-body input[type=text], .modal-body textarea {
@@ -274,3 +295,7 @@ mark.hl.flash { animation: flash 1.2s ease 2; }
   #print-area .p-note { margin-top: 4pt; color: #444; font-size: 10pt; }
   #print-area .p-loc { color: #888; font-size: 8.5pt; margin-top: 2pt; }
 }
+#loading-text { white-space: pre-line; text-align: center; max-width: 86vw; line-height: 1.5; }
+.modal.wide .scan-sum, .modal.wide .scan-tools, .modal.wide .scan-foot { flex: none; }
+.scan-list { min-height: 120px; }
+.modal-body label.scan-row { display: flex; margin: 0; font-size: inherit; }

@@ -46,6 +46,7 @@
   </div>
   <button id="btn-import" class="fab" title="匯入電子書">＋</button>
   <input id="file-input" type="file" multiple hidden>
+  <input id="folder-input" type="file" webkitdirectory multiple hidden>
 </section>
 
 <!-- ============ 閱讀器 ============ -->
@@ -123,7 +124,7 @@
 </div>
 
 <div id="toast" class="toast hidden"></div>
-<div id="loading" class="loading hidden"><div class="spinner"></div><div id="loading-text">載入中…</div></div>
+<div id="loading" class="loading hidden"><div class="spinner"></div><div id="loading-text">載入中…</div><button id="loading-stop" class="btn hidden">停止匯入</button></div>
 
 <!-- 匯出 PDF 時使用的列印區 -->
 <div id="print-area"></div>

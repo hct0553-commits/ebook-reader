@@ -38,6 +38,9 @@ function loading(text) {
 }
 function openModal(title, html) {
     $('#modal-title').textContent = title
+    $('#modal').classList.remove('wide')
+    const body = $('#modal-body')
+    body.onclick = body.onchange = body.oninput = null   // 對話框共用同一個容器，先清掉上一個的事件
     $('#modal-body').innerHTML = html
     $('#modal').classList.remove('hidden')
     $('#modal-backdrop').classList.remove('hidden')
@@ -275,35 +278,190 @@ function bookMenu(id) {
 }
 
 /* ====================== 匯入 ====================== */
-$('#btn-import').onclick = () => $('#file-input').click()
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+const fmtSize = n => n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`
+
+$('#btn-import').onclick = () => {
+    const body = openModal('匯入電子書', `
+        <button class="btn block" data-a="files"><span class="ic">📄</span><span>選擇檔案<small>可一次多選</small></span></button>
+        <button class="btn block" data-a="folder"${isIOS ? ' disabled' : ''}><span class="ic">📂</span><span>掃描資料夾<small>${isIOS
+            ? 'iPhone 的 Safari 不支援選擇資料夾，請改用「選擇檔案」多選'
+            : '連子資料夾一起找出可匯入的書，再全選或勾選匯入'}</small></span></button>
+        <p class="hint">電腦上也可以直接把檔案或整個資料夾拖進書庫。</p>`)
+    body.onclick = e => {
+        const a = e.target.closest('[data-a]')?.dataset.a
+        if (!a) return
+        closeModal()
+        $(a === 'files' ? '#file-input' : '#folder-input').click()
+    }
+}
 $('#file-input').onchange = e => { importFiles([...e.target.files]); e.target.value = '' }
+$('#folder-input').onchange = e => {
+    const files = [...e.target.files]
+    e.target.value = ''
+    const root = files[0]?.webkitRelativePath?.split('/')[0] || '資料夾'
+    scanDialog(files.map(f => ({ file: f, path: f.webkitRelativePath || f.name })), root)
+}
 document.addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dragging') })
 document.addEventListener('dragleave', e => { if (!e.relatedTarget) document.body.classList.remove('dragging') })
-document.addEventListener('drop', e => {
+document.addEventListener('drop', async e => {
     e.preventDefault()
     document.body.classList.remove('dragging')
+    const entries = [...(e.dataTransfer?.items ?? [])].map(i => i.webkitGetAsEntry?.()).filter(Boolean)
+    if (entries.some(en => en.isDirectory)) {
+        loading('掃描資料夾中…')
+        try {
+            const found = []
+            for (const en of entries) await walkEntry(en, found)
+            loading(null)
+            scanDialog(found, entries.length === 1 ? entries[0].name : '拖入的資料夾')
+        } catch (err) { loading(null); toast(`無法讀取資料夾：${err.message || err}`, 5000) }
+        return
+    }
     if (e.dataTransfer?.files?.length) importFiles([...e.dataTransfer.files])
 })
 
+// 遞迴讀取拖進來的資料夾
+async function walkEntry(entry, out) {
+    if (entry.isFile) {
+        const file = await new Promise((res, rej) => entry.file(res, rej))
+        out.push({ file, path: entry.fullPath.replace(/^\//, '') })
+    } else if (entry.isDirectory) {
+        const reader = entry.createReader()
+        for (;;) {
+            const batch = await new Promise((res, rej) => reader.readEntries(res, rej))
+            if (!batch.length) break
+            for (const en of batch) await walkEntry(en, out)
+        }
+    }
+}
+
+/* ---------- 掃描資料夾：列出可匯入的書，全選或勾選 ---------- */
+function scanDialog(found, rootName) {
+    const owned = new Set(visibleBooks().map(b => `${b.fileName}|${b.size}`))
+    const items = found.map(({ file, path }) => {
+        const fmt = detectFormat(file.name)
+        if (!fmt || file.name.startsWith('.')) return null
+        const parts = path.split('/')
+        return {
+            file, fmt, name: file.name, size: file.size,
+            dir: parts.slice(1, -1).join(' / '),
+            dup: owned.has(`${file.name}|${file.size}`),
+        }
+    }).filter(Boolean)
+        .sort((a, b) => collator.compare(a.dir, b.dir) || collator.compare(a.name, b.name))
+    items.forEach((it, i) => { it.i = i; it.key = normalize(`${it.name} ${it.dir}`) })
+    const others = found.length - items.length
+    const nDup = items.filter(it => it.dup).length
+    if (!items.length) {
+        openModal('掃描資料夾', `<p>「${esc(rootName)}」裡沒有可匯入的電子書。</p>
+            <p class="hint">共檢查 ${found.length} 個檔案。支援格式：${SUPPORTED.join('、').toUpperCase()}</p>`)
+        return
+    }
+    const fmts = [...new Set(items.map(it => it.fmt))].sort()
+    const fmtOn = new Set(fmts)
+    const selected = new Set()
+    let query = ''
+
+    const body = openModal(`📂 ${rootName}`, `
+        <div class="scan-sum">找到 <b>${items.length}</b> 本可匯入${nDup ? `（其中 ${nDup} 本已在書架，標灰不可選）` : ''}
+          ${others ? `・略過 ${others} 個非電子書檔案` : ''}</div>
+        <div class="scan-tools">
+          <div class="search">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 3a6.5 6.5 0 0 1 5.2 10.4l5.5 5.5-1.4 1.4-5.5-5.5A6.5 6.5 0 1 1 9.5 3zm0 2a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z"/></svg>
+            <input type="search" id="scan-q" placeholder="在結果中搜尋檔名或資料夾" autocomplete="off" spellcheck="false">
+          </div>
+          <button class="btn" data-a="all">全選</button><button class="btn" data-a="none">全不選</button>
+        </div>
+        ${fmts.length > 1 ? `<div class="scan-tools">${fmts.map(f =>
+            `<button class="chip on" data-fmt="${f}">${f.toUpperCase()} ${items.filter(it => it.fmt === f).length}</button>`).join('')}</div>` : ''}
+        <div class="scan-list" id="scan-list"></div>
+        <div class="scan-foot"><span class="info" id="scan-info"></span>
+          <button class="btn primary" id="scan-go" disabled>匯入</button></div>`)
+    $('#modal').classList.add('wide')
+
+    const visible = () => items.filter(it => fmtOn.has(it.fmt) && (!query || query.every(t => it.key.includes(t))))
+    const updateFoot = () => {
+        const sel = items.filter(it => selected.has(it.i))
+        const size = sel.reduce((n, it) => n + it.size, 0)
+        body.querySelector('#scan-info').textContent = sel.length ? `已選 ${sel.length} 本・${fmtSize(size)}` : '尚未選擇'
+        const go = body.querySelector('#scan-go')
+        go.disabled = !sel.length
+        go.textContent = sel.length ? `匯入 ${sel.length} 本` : '匯入'
+    }
+    const renderList = () => {
+        const vis = visible()
+        body.querySelector('#scan-list').innerHTML = vis.length ? vis.map(it => `
+            <label class="scan-row${it.dup ? ' dup' : ''}">
+              <input type="checkbox" data-i="${it.i}"${it.dup ? ' disabled' : selected.has(it.i) ? ' checked' : ''}>
+              <span class="nm"><b>${esc(it.name)}</b><small>${it.dup ? '已在書架・' : ''}${esc(it.dir || '（最上層）')}</small></span>
+              <span class="sz">${fmtSize(it.size)}</span>
+            </label>`).join('') : '<div class="lib-note">沒有符合條件的檔案</div>'
+        updateFoot()
+    }
+    body.onchange = e => {
+        const i = e.target.dataset?.i
+        if (i == null) return
+        e.target.checked ? selected.add(+i) : selected.delete(+i)
+        updateFoot()
+    }
+    body.oninput = e => {
+        if (e.target.id !== 'scan-q') return
+        query = normalize(e.target.value).split(/\s+/).filter(Boolean)
+        if (!query.length) query = ''
+        renderList()
+    }
+    body.onclick = e => {
+        const chip = e.target.closest('[data-fmt]')
+        if (chip) {
+            const f = chip.dataset.fmt
+            fmtOn.has(f) ? fmtOn.delete(f) : fmtOn.add(f)
+            chip.classList.toggle('on', fmtOn.has(f))
+            return renderList()
+        }
+        const a = e.target.closest('[data-a]')?.dataset.a
+        // 全選／全不選只作用在目前篩選後看得到的書
+        if (a === 'all') { visible().forEach(it => !it.dup && selected.add(it.i)); renderList() }
+        if (a === 'none') { visible().forEach(it => selected.delete(it.i)); renderList() }
+        if (e.target.id === 'scan-go') {
+            const files = items.filter(it => selected.has(it.i)).map(it => it.file)
+            closeModal()
+            importFiles(files)
+        }
+    }
+    renderList()
+}
+
+let stopImport = false
+$('#loading-stop').onclick = () => { stopImport = true; loading('即將停止，完成目前這一本…') }
+
 async function importFiles(files) {
-    let added = 0
-    for (const file of files) {
+    let added = 0, skipped = 0
+    const failed = [], batch = files.length > 1
+    stopImport = false
+    $('#loading-stop').classList.toggle('hidden', files.length < 3)
+    for (const [k, file] of files.entries()) {
+        if (stopImport) break
         const format = detectFormat(file.name)
-        if (!format) { toast(`不支援的格式：${file.name}\n支援：${SUPPORTED.join(', ')}`, 4000); continue }
-        loading(`匯入中：${file.name}`)
+        if (!format) { failed.push([file.name, '不支援的格式']); continue }
+        loading(batch ? `匯入中（${k + 1} / ${files.length}）\n${file.name}` : `匯入中：${file.name}`)
         try {
             const buf = await file.arrayBuffer()
             const id = await sha256Hex(buf)
             const existing = library.books[id]
-            if (existing && !existing.deleted && localFiles.has(id)) { toast(`《${existing.title}》已在書庫中`); continue }
+            if (existing && !existing.deleted && localFiles.has(id)) {
+                skipped++
+                if (!batch) toast(`《${existing.title}》已在書庫中`)
+                continue
+            }
             const blob = new Blob([buf], { type: file.type || 'application/octet-stream' })
             const book = await openBook(new File([blob], file.name), format)
             let cover = null
             try {
-                // 封面非必要：最多等 8 秒，避免卡住匯入
+                // 封面非必要：單本最多等 8 秒，大批匯入時 3 秒，避免卡住
                 cover = await Promise.race([
                     (async () => makeThumb(await book.getCover?.()))(),
-                    new Promise(r => setTimeout(() => r(null), 8000)),
+                    new Promise(r => setTimeout(() => r(null), files.length > 3 ? 3000 : 8000)),
                 ])
             } catch { /* 無封面 */ }
             book.destroy?.()
@@ -321,16 +479,29 @@ async function importFiles(files) {
                 deleted: false, updatedAt: now,
             })
             added++
+            if (added % 10 === 0) saveLibrary({ sync: false, now: true })   // 大批匯入中途也存檔
         } catch (err) {
             console.error(err)
-            toast(`無法開啟 ${file.name}：${err.message || err}`, 5000)
+            const msg = err.message || String(err)
+            failed.push([file.name, /not supported|zip|invalid|corrupt|unexpected|end of/i.test(msg)
+                ? `檔案可能已損壞，或副檔名與實際格式不符（${msg}）` : msg])
         }
     }
+    const stopped = stopImport
+    stopImport = false
+    $('#loading-stop').classList.add('hidden')
     loading(null)
     if (added) {
-        toast(`已匯入 ${added} 本書`)
         saveLibrary({ now: true })
         renderLibrary()
+    }
+    const parts = [added && `已匯入 ${added} 本`, skipped && `${skipped} 本已在書架`, failed.length && `${failed.length} 本失敗`].filter(Boolean)
+    if (failed.length) {
+        openModal('匯入結果', `<p>${parts.join('・')}${stopped ? '（已手動停止）' : ''}</p>
+            <p class="hint">以下檔案無法匯入：</p>
+            ${failed.map(([n, why]) => `<p style="font-size:13px;margin:6px 0"><b>${esc(n)}</b><br><span class="muted">${esc(why)}</span></p>`).join('')}`)
+    } else if (parts.length && (batch || added)) {
+        toast(parts.join('・') + (stopped ? '（已停止）' : ''))
     }
 }
 

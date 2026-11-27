@@ -1,5 +1,5 @@
 // Service Worker：離線可用。App 本體「網路優先」（確保更新），函式庫「快取優先」
-const VERSION = 'ebr-v2'
+const VERSION = 'ebr-v3'
 const CORE = [
     './', 'index.html', 'manifest.webmanifest', 'css/app.css',
     'js/app.js', 'js/config.js', 'js/db.js', 'js/drive.js', 'js/export.js',
