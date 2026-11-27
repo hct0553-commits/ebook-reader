@@ -136,12 +136,48 @@ function matches(b, terms) {
     return terms.every(t => hay.includes(t))
 }
 
-async function coverURL(id) {
-    if (coverURLs.has(id)) return coverURLs.get(id)
-    const blob = await db.get('covers', id)
+// key：書本 ID（原始封面）或 `cc:版本`（自訂封面圖片）
+async function coverURL(key) {
+    if (coverURLs.has(key)) return coverURLs.get(key)
+    const blob = await db.get('covers', key)
     const url = blob ? URL.createObjectURL(blob) : null
-    coverURLs.set(id, url)
+    coverURLs.set(key, url)
     return url
+}
+function forgetCoverURL(key) {
+    const url = coverURLs.get(key)
+    if (url) URL.revokeObjectURL(url)
+    coverURLs.delete(key)
+}
+
+/* 封面設定 b.cover：
+ *   null / { kind:'original' }        使用書本原本的封面
+ *   { kind:'plain', color:[h,s,l] }   純色封面（只顯示書名、作者）
+ *   { kind:'image', ver, driveFileId } 自訂圖片（本機存在 covers 的 `cc:ver`，雲端存在 Drive）
+ * 每種都帶 updatedAt，同步時以較新的為準。 */
+const COVER_COLORS = [
+    [158, 32, 30], [212, 38, 34], [0, 0, 26], [24, 38, 36],
+    [350, 32, 38], [268, 22, 38], [38, 30, 50], [200, 12, 52],
+]
+const NEUTRAL_COLOR = [0, 0, 46]
+const customKey = c => `cc:${c.ver}`
+const sameColor = (a, b) => !!a && !!b && a.every((v, i) => v === b[i])
+
+function plainCover(b, color) {
+    const [h, s, l] = color ?? [hue(b.title), 35, 40]
+    return `<div class="ph" style="background:hsl(${h} ${s}% ${l}%)">${esc(b.title)}<small>${esc(b.author || '')}</small></div>`
+}
+
+async function coverHTML(b) {
+    const c = b.cover
+    if (c?.kind === 'plain') return plainCover(b, c.color)
+    if (c?.kind === 'image') {
+        const url = await coverURL(customKey(c))
+        // 圖片還沒從雲端下載前，用中性色，避免先閃出原始封面
+        return url ? `<img src="${url}" alt="">` : plainCover(b, NEUTRAL_COLOR)
+    }
+    const url = localFiles.has(b.id) ? await coverURL(b.id) : null
+    return url ? `<img src="${url}" alt="">` : plainCover(b)
 }
 
 let renderSeq = 0
@@ -181,11 +217,9 @@ async function renderLibrary() {
 }
 
 async function bookCard(b) {
-    const url = localFiles.has(b.id) ? await coverURL(b.id) : null
     const pct = Math.round((b.progress?.percent || 0) * 100)
     const n = sortedHighlights(b).length
-    const cover = url ? `<img src="${url}" alt="">`
-        : `<div class="ph" style="background:hsl(${hue(b.title)} 35% 40%)">${esc(b.title)}<small>${esc(b.author || '')}</small></div>`
+    const cover = await coverHTML(b)
     return `<div class="book" data-id="${b.id}">
         <div class="cover">${cover}<span class="badge">${esc(b.format)}</span>
           ${localFiles.has(b.id) ? '' : '<span class="badge cloud">雲端</span>'}</div>
@@ -230,11 +264,13 @@ function bookMenu(id) {
     const n = sortedHighlights(b).length
     const body = openModal(b.title, `
         <button class="btn block" data-a="export"><span class="ic">📤</span><span>一鍵匯出閱讀重點<small>${n} 則重點 → Word / PDF / Markdown</small></span></button>
+        <button class="btn block" data-a="cover"><span class="ic">🖼</span><span>更換封面<small>改成純色封面或自己的圖片</small></span></button>
         <button class="btn block" data-a="info"><span class="ic">ℹ️</span><span>書籍資訊</span></button>
         <button class="btn block danger" data-a="delete"><span class="ic">🗑</span><span>從書庫移除<small>所有裝置都會移除，Drive 中的書檔會移到垃圾桶</small></span></button>`)
     body.onclick = e => {
         const a = e.target.closest('[data-a]')?.dataset.a
         if (a === 'export') exportDialog(id)
+        if (a === 'cover') coverDialog(id)
         if (a === 'info') {
             const info = openModal('書籍資訊', `
                 <label for="bi-title">書名</label>
@@ -269,12 +305,103 @@ function bookMenu(id) {
             b.deleted = true
             b.updatedAt = Date.now()
             db.del('files', id); db.del('covers', id)
-            localFiles.delete(id); coverURLs.delete(id)
+            localFiles.delete(id); forgetCoverURL(id)
+            if (b.cover?.kind === 'image') { db.del('covers', customKey(b.cover)); forgetCoverURL(customKey(b.cover)) }
             closeModal()
             saveLibrary()
             renderLibrary()
         }
     }
+}
+
+/* ====================== 更換封面 ====================== */
+async function coverDialog(id) {
+    const b = library.books[id]
+    const cur = b.cover?.kind ?? 'original'
+    const origURL = localFiles.has(id) ? await coverURL(id) : null
+    const customURL = cur === 'image' ? await coverURL(customKey(b.cover)) : null
+    const tile = (attrs, inner, label, selected) =>
+        `<button class="cover-opt${selected ? ' selected' : ''}" ${attrs}><div class="cover">${inner}</div><span>${label}</span></button>`
+    const tiles = [
+        tile('data-k="original"', origURL ? `<img src="${origURL}" alt="">` : plainCover(b), '原始封面', cur === 'original'),
+        ...(cur === 'image' ? [tile('data-k="keep"', customURL ? `<img src="${customURL}" alt="">` : plainCover(b, NEUTRAL_COLOR), '目前的圖片', true)] : []),
+        ...COVER_COLORS.map((c, i) => tile(`data-k="plain" data-i="${i}"`, plainCover(b, c), '', cur === 'plain' && sameColor(b.cover.color, c))),
+    ]
+    const body = openModal('更換封面', `
+        <p class="hint" style="margin-top:0">選一個純色封面（只顯示書名），或換成你自己的圖片。已連結 Google Drive 的話，其他裝置也會套用。</p>
+        <div class="cover-grid">${tiles.join('')}</div>
+        <button class="btn block" data-k="pick"><span class="ic">🖼</span><span>選擇圖片…<small>從相簿或檔案選一張圖，會自動裁成封面比例</small></span></button>
+        <input type="file" accept="image/*" id="cover-input" hidden>`)
+    const input = body.querySelector('#cover-input')
+    body.onclick = e => {
+        const el = e.target.closest('[data-k]')
+        if (!el) return
+        const k = el.dataset.k
+        if (k === 'original') setCover(id, { kind: 'original' })
+        if (k === 'plain') setCover(id, { kind: 'plain', color: COVER_COLORS[+el.dataset.i] })
+        if (k === 'keep') closeModal()
+        if (k === 'pick') input.click()
+    }
+    input.onchange = async () => {
+        const file = input.files?.[0]
+        if (!file) return
+        try {
+            const blob = await makeCoverImage(file)
+            const ver = newId()
+            await db.put('covers', `cc:${ver}`, blob)
+            setCover(id, { kind: 'image', ver, driveFileId: null })
+        } catch (err) {
+            console.error(err)
+            toast('無法讀取這張圖片，請換一張（JPG / PNG）')
+        }
+    }
+}
+
+function setCover(id, cover) {
+    const b = library.books[id]
+    const old = b.cover
+    if (old?.kind === 'image' && old.ver !== cover.ver) {
+        db.del('covers', customKey(old))
+        forgetCoverURL(customKey(old))
+        if (old.driveFileId) queueCoverTrash(old.driveFileId)
+    }
+    b.cover = { ...cover, updatedAt: Date.now() }
+    closeModal()
+    saveLibrary()
+    renderLibrary()
+    toast('已更換封面')
+}
+
+/** 把圖片置中裁成 2:3，輸出 360×540 的 JPEG */
+async function makeCoverImage(file) {
+    const url = URL.createObjectURL(file)
+    try {
+        const img = new Image()
+        img.src = url
+        await img.decode()
+        const W = 360, H = 540
+        const sw = img.naturalWidth, sh = img.naturalHeight
+        if (!sw || !sh) throw new Error('empty image')
+        const scale = Math.max(W / sw, H / sh)
+        const cw = W / scale, ch = H / scale
+        const canvas = document.createElement('canvas')
+        canvas.width = W; canvas.height = H
+        const ctx = canvas.getContext('2d')
+        ctx.fillStyle = '#fff'
+        ctx.fillRect(0, 0, W, H)
+        ctx.drawImage(img, (sw - cw) / 2, (sh - ch) / 2, cw, ch, 0, 0, W, H)
+        const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.85))
+        if (!blob) throw new Error('toBlob failed')
+        return blob
+    } finally {
+        URL.revokeObjectURL(url)
+    }
+}
+
+// 被換掉的雲端封面圖片，等下次同步時移到 Drive 垃圾桶
+const coverTrashQueue = () => JSON.parse(localStorage.getItem('coverTrash') || '[]')
+function queueCoverTrash(fileId) {
+    localStorage.setItem('coverTrash', JSON.stringify([...new Set([...coverTrashQueue(), fileId])]))
 }
 
 /* ====================== 匯入 ====================== */
@@ -974,7 +1101,12 @@ async function syncNow(interactive) {
         const folder = await drive.ensureFolder()
         const remote = await drive.loadRemoteLibrary(folder)
         const before = JSON.stringify(rec()?.highlights ?? {})
+        const imageKeys = lib => new Set(Object.values(lib.books).filter(b => b.cover?.kind === 'image').map(b => customKey(b.cover)))
+        const oldKeys = imageKeys(library)
         library = drive.mergeLibraries(library, remote.data)
+        // 被其他裝置換掉的自訂封面：刪掉本機舊圖
+        const newKeys = imageKeys(library)
+        for (const k of oldKeys) if (!newKeys.has(k)) { db.del('covers', k); forgetCoverURL(k) }
         // 上傳本機才有的書檔
         for (const b of Object.values(library.books)) {
             if (b.deleted || b.driveFileId || !localFiles.has(b.id)) continue
@@ -986,6 +1118,35 @@ async function syncNow(interactive) {
             live.driveFileId = fileId
             live.driveTrashed = false
             live.updatedAt = Date.now()
+        }
+        // 自訂封面圖片：上傳本機新設定的、下載其他裝置設定的
+        for (const b of Object.values(library.books)) {
+            const c = b.cover
+            if (b.deleted || c?.kind !== 'image') continue
+            const key = customKey(c)
+            if (!c.driveFileId) {
+                const blob = await db.get('covers', key)
+                if (!blob) continue
+                const fileId = await drive.uploadBook(blob, `cover-${b.id}.jpg`, folder)
+                const live = library.books[b.id]?.cover
+                if (live?.kind === 'image' && live.ver === c.ver) live.driveFileId = fileId
+                else queueCoverTrash(fileId)   // 上傳期間又換了封面
+            } else if (!(await db.get('covers', key))) {
+                try {
+                    await db.put('covers', key, await drive.downloadBook(c.driveFileId))
+                    forgetCoverURL(key)
+                } catch (e) {
+                    if (e instanceof drive.AuthError) throw e
+                    console.warn('封面下載失敗', e)
+                }
+            }
+        }
+        for (const fileId of coverTrashQueue()) {
+            try { await drive.trashFile(fileId) } catch (e) {
+                if (e instanceof drive.AuthError) throw e
+                if (e.status !== 404) { console.warn(e); continue }
+            }
+            localStorage.setItem('coverTrash', JSON.stringify(coverTrashQueue().filter(x => x !== fileId)))
         }
         // 已刪除的書：Drive 中的檔案移到垃圾桶
         for (const b of Object.values(library.books)) {

@@ -231,6 +231,12 @@ export function mergeLibraries(local, remote) {
         if (opened) m.openedAt = opened
         const pa = a.progress, pb = b.progress
         m.progress = structuredClone((pa?.updatedAt || 0) >= (pb?.updatedAt || 0) ? pa : pb) ?? null
+        // 封面設定獨立以 updatedAt 合併；同一張自訂圖片時，取已知 Drive 檔案 ID 的那一方
+        const ca = a.cover, cb = b.cover
+        let cv = (ca?.updatedAt || 0) >= (cb?.updatedAt || 0) ? ca : cb
+        const co = cv === ca ? cb : ca
+        if (cv?.kind === 'image' && !cv.driveFileId && co?.kind === 'image' && co.ver === cv.ver && co.driveFileId) cv = co
+        m.cover = structuredClone(cv) ?? null
         const ha = a.highlights ?? {}, hb = b.highlights ?? {}
         m.highlights = {}
         for (const hid of new Set([...Object.keys(ha), ...Object.keys(hb)])) {
